@@ -1,11 +1,9 @@
-"""Crée un collaborateur après authentification d'un manager."""
-
-from getpass import getpass
+"""Create an employee with the current manager session."""
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth import authenticate
+from app.auth_session import get_current_user
 from app.commands.create_manager import ask_confirmed_password
 from app.database import SessionLocal
 from app.models import Role
@@ -26,12 +24,8 @@ def ask_role(session: Session) -> str:
 
 
 def main() -> None:
-    print("Authentification du manager")
-    manager_email = input("Email       : ").strip()
-    manager_password = getpass("Mot de passe : ")
-
     with SessionLocal.begin() as session:
-        actor = authenticate(session, manager_email, manager_password)
+        actor = get_current_user(session)
 
         print("\nNouveau collaborateur")
         full_name = input("Nom complet : ").strip()
