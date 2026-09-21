@@ -15,8 +15,9 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Ouvrir ensuite `.env` et remplacer uniquement la valeur de `DB_PASSWORD` par
-le mot de passe du compte MySQL `epic_events_app`.
+Dans `.env`, renseigner `DB_PASSWORD` et `JWT_SECRET`.
+Consulter `README_AUTH.md` pour générer le secret et utiliser les commandes
+d'authentification.
 
 Ne jamais envoyer le fichier `.env` sur GitHub. Il est déjà présent dans
 `.gitignore`.

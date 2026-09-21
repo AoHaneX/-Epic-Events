@@ -133,6 +133,10 @@ def change_password(
     new_password: str,
 ) -> None:
     require(
+        actor.is_active,
+        "Un compte désactivé ne peut pas changer de mot de passe.",
+    )
+    require(
         actor.id == employee.id or can_manage_employees(actor),
         "Un collaborateur ne peut changer que son propre mot de passe.",
     )
