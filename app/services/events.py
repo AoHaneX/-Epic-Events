@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth_session import get_current_user
-from app.models import Contract, Event
+from app.models import Contract, Event, Employee
 from app.permissions import SUPPORT_ROLE, can_read_business_data, has_role, require
 
 
@@ -42,3 +42,17 @@ def list_events(
     if mine:
         statement = statement.where(Event.support_contact_id == actor.id)
     return list(session.scalars(statement).all())
+
+def get_all_events(
+    session: Session,
+    actor: Employee,
+) -> list[Event]:
+    require(
+        can_read_business_data(actor),
+        "Vous ne possédez pas les droits pour consulter les événements.",
+    )
+    return list(
+        session.scalars(
+            select(Event).order_by(Event.id)
+        ).all()
+    )

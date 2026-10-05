@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth_session import get_current_user
-from app.models import Client, Contract
+from app.models import Client, Contract, Employee
 from app.permissions import can_read_business_data, require
 
 
@@ -29,3 +29,17 @@ def list_contracts(
     if unpaid:
         statement = statement.where(Contract.remaining_amount > 0)
     return list(session.scalars(statement).all())
+
+def get_all_contracts(
+    session: Session,
+    actor: Employee,
+) -> list[Contract]:
+    require(
+        can_read_business_data(actor),
+        "Vous ne possédez pas les droits pour consulter les contrats.",
+    )
+    return list(
+        session.scalars(
+            select(Contract).order_by(Contract.id)
+        ).all()
+    )
