@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth_session import get_current_user
-from app.models import Client, Employee
+from app.models import Client
 from app.permissions import can_read_business_data, require
 
 
@@ -20,20 +20,3 @@ def list_clients(session: Session) -> list[Client]:
         .order_by(Client.id)
     )
     return list(session.scalars(statement).all())
-
-
-
-def get_all_clients(
-    session: Session,
-    actor: Employee,
-) -> list[Client]:
-    require(
-        can_read_business_data(actor),
-        "Vous ne possédez pas les droits pour consulter les clients.",
-    )
-    return list(
-        session.scalars(
-            select(Client).order_by(Client.id)
-        ).all()
-    )
-

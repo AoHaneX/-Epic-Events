@@ -4,7 +4,7 @@ from app.database import SessionLocal
 from app.services.clients import list_clients
 
 
-def main() -> None:
+def show_list() -> None:
     with SessionLocal() as session:
         clients = list_clients(session)
 
@@ -31,5 +31,5 @@ def main() -> None:
         print()
 
 
-if __name__ == "__main__":
-    main()
+def main(action="list") -> None:
+    show_list()

@@ -306,14 +306,14 @@ class BusinessReadTests(BusinessReadFixture):
 
 class BusinessCommandTests(BusinessReadFixture):
     def run_command(self, *arguments):
-        from app.commands import list_clients, list_contracts, list_events
+        from app.commands import clients, contracts, events
 
         output = io.StringIO()
         errors = io.StringIO()
         with (
-            patch.object(list_clients, "SessionLocal", self.SessionLocal),
-            patch.object(list_contracts, "SessionLocal", self.SessionLocal),
-            patch.object(list_events, "SessionLocal", self.SessionLocal),
+            patch.object(clients, "SessionLocal", self.SessionLocal),
+            patch.object(contracts, "SessionLocal", self.SessionLocal),
+            patch.object(events, "SessionLocal", self.SessionLocal),
             patch("sys.argv", ["epicevents.py", *arguments]),
             redirect_stdout(output),
             redirect_stderr(errors),
@@ -425,7 +425,10 @@ class CommandRoutingTests(unittest.TestCase):
                 ):
                     epicevents.main()
                 importer.assert_called_once_with(epicevents.COMMANDS[command])
-                module.main.assert_called_once_with()
+                expected = {}
+                if command in epicevents.LEGACY_ACTIONS:
+                    expected["action"] = epicevents.LEGACY_ACTIONS[command]
+                module.main.assert_called_once_with(**expected)
 
     def test_options_are_forwarded_to_the_correct_command(self) -> None:
         cases = [
@@ -447,7 +450,7 @@ class CommandRoutingTests(unittest.TestCase):
                 ):
                     epicevents.main()
                 importer.assert_called_once_with(epicevents.COMMANDS[arguments[0]])
-                module.main.assert_called_once_with(**expected)
+                module.main.assert_called_once_with(action="list", **expected)
 
     def test_invalid_arguments_are_rejected_before_loading_commands(self) -> None:
         cases = [
@@ -467,8 +470,11 @@ class CommandRoutingTests(unittest.TestCase):
                 self.assertEqual(error.exception.code, 2)
                 importer.assert_not_called()
 
-    def test_existing_error_handling_is_preserved(self) -> None:
-        for exception in (PermissionError, RuntimeError, ValueError):
+    def test_expected_errors_have_readable_messages(self) -> None:
+        from app.commands import CommandInputError
+        from app.services import BusinessError
+
+        for exception in (AuthorizationError, auth_session.AuthSessionError, BusinessError, CommandInputError):
             with self.subTest(exception=exception):
                 module = Mock()
                 module.main.side_effect = exception("Accès refusé pour le test.")
@@ -482,6 +488,18 @@ class CommandRoutingTests(unittest.TestCase):
                         epicevents.main()
                 self.assertEqual(error.exception.code, 1)
                 self.assertIn("Accès refusé pour le test.", errors.getvalue())
+
+    def test_unexpected_errors_are_not_hidden(self) -> None:
+        for exception in (RuntimeError, ValueError, TypeError):
+            with self.subTest(exception=exception):
+                module = Mock()
+                module.main.side_effect = exception("Unexpected failure")
+                with (
+                    patch("sys.argv", ["epicevents.py", "status"]),
+                    patch.object(epicevents, "import_module", return_value=module),
+                ):
+                    with self.assertRaises(exception):
+                        epicevents.main()
 
 
 if __name__ == "__main__":

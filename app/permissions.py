@@ -55,13 +55,17 @@ def can_create_contract(employee: Employee) -> bool:
 
 
 def can_update_contract(employee: Employee, contract: Contract) -> bool:
+    return can_reassign_contract_client(employee, contract.client)
+
+
+def can_reassign_contract_client(employee: Employee, client: Client) -> bool:
     if not is_active(employee):
         return False
     if has_role(employee, MANAGEMENT_ROLE):
         return True
     return (
         has_role(employee, SALES_ROLE)
-        and contract.client.sales_contact_id == employee.id
+        and client.sales_contact_id == employee.id
     )
 
 
@@ -76,6 +80,10 @@ def can_create_event(employee: Employee, contract: Contract) -> bool:
 
 
 def can_assign_support(employee: Employee) -> bool:
+    return has_role(employee, MANAGEMENT_ROLE)
+
+
+def can_change_event_contract(employee: Employee) -> bool:
     return has_role(employee, MANAGEMENT_ROLE)
 
 

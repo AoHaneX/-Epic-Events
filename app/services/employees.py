@@ -1,29 +1,73 @@
 """Création et gestion des comptes collaborateurs."""
 
-from sqlalchemy import func, select
+import re
+
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth import normalize_email
 from app.models import Employee, Role
 from app.permissions import AuthorizationError, can_manage_employees, require
 from app.security import hash_password
+from app.services import BusinessError
 
 
-class DuplicateEmailError(ValueError):
+_UNSET = object()
+
+
+class EmployeeValidationError(BusinessError):
+    pass
+
+
+class EmployeeNotFoundError(BusinessError):
+    pass
+
+
+class DuplicateEmailError(BusinessError):
     """Un collaborateur utilise déjà cette adresse email."""
 
 
-class UnknownRoleError(ValueError):
+class UnknownRoleError(BusinessError):
     """Le rôle demandé n'existe pas dans la table roles."""
 
 
-def _email_already_exists(session: Session, email: str) -> bool:
-    return session.scalar(
-        select(Employee.id).where(Employee.email == normalize_email(email))
-    ) is not None
+def _validate_name(full_name: str) -> str:
+    if not isinstance(full_name, str) or not full_name.strip():
+        raise EmployeeValidationError("Le nom du collaborateur est obligatoire.")
+    if len(full_name.strip()) > 150:
+        raise EmployeeValidationError("Le nom ne doit pas dépasser 150 caractères.")
+    return full_name.strip()
+
+
+def _validate_email(session: Session, email: str, employee_id=None) -> str:
+    if not isinstance(email, str):
+        raise EmployeeValidationError("L'email est obligatoire.")
+    email = normalize_email(email)
+    if len(email) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+", email):
+        raise EmployeeValidationError("L'email est vide ou invalide.")
+    statement = select(Employee.id).where(Employee.email == email)
+    if employee_id is not None:
+        statement = statement.where(Employee.id != employee_id)
+    if session.scalar(statement) is not None:
+        raise DuplicateEmailError("Cette adresse email est déjà utilisée.")
+    return email
+
+
+def list_employees(session: Session, actor: Employee) -> list[Employee]:
+    require(can_manage_employees(actor), "Seul Management peut lister les collaborateurs.")
+    return list(session.scalars(select(Employee).order_by(Employee.id)).all())
+
+
+def get_employee(session: Session, employee_id: int) -> Employee:
+    employee = session.get(Employee, employee_id)
+    if employee is None:
+        raise EmployeeNotFoundError(f"Collaborateur #{employee_id} introuvable.")
+    return employee
 
 
 def _get_role(session: Session, role_code: str) -> Role:
+    if not isinstance(role_code, str) or not role_code.strip():
+        raise UnknownRoleError("Le rôle est obligatoire.")
     normalized_code = role_code.strip().upper()
     role = session.scalar(select(Role).where(Role.code == normalized_code))
     if role is None:
@@ -39,17 +83,18 @@ def create_initial_manager(
     password: str,
 ) -> Employee:
     """Crée le tout premier compte, uniquement si la table employees est vide."""
-    employee_count = session.scalar(select(func.count()).select_from(Employee))
-    if employee_count != 0:
+    role = _get_role(session, "MANAGEMENT")
+    session.scalar(select(Role.id).where(Role.id == role.id).with_for_update())
+    if session.scalar(select(Employee.id).limit(1).with_for_update()) is not None:
         raise AuthorizationError(
             "Le compte initial existe déjà. Utilise un manager authentifié."
         )
 
     manager = Employee(
-        full_name=full_name.strip(),
-        email=normalize_email(email),
+        full_name=_validate_name(full_name),
+        email=_validate_email(session, email),
         password_hash=hash_password(password),
-        role=_get_role(session, "MANAGEMENT"),
+        role=role,
         is_active=True,
     )
     session.add(manager)
@@ -71,13 +116,9 @@ def create_employee(
         "Seule l'équipe de gestion peut créer un collaborateur.",
     )
 
-    normalized_email = normalize_email(email)
-    if _email_already_exists(session, normalized_email):
-        raise DuplicateEmailError("Cette adresse email est déjà utilisée.")
-
     employee = Employee(
-        full_name=full_name.strip(),
-        email=normalized_email,
+        full_name=_validate_name(full_name),
+        email=_validate_email(session, email),
         password_hash=hash_password(password),
         role=_get_role(session, role_code),
         is_active=True,
@@ -92,35 +133,27 @@ def update_employee(
     actor: Employee,
     employee: Employee,
     *,
-    full_name: str | None = None,
-    email: str | None = None,
-    role_code: str | None = None,
+    full_name=_UNSET,
+    email=_UNSET,
+    role_code=_UNSET,
 ) -> Employee:
     require(
         can_manage_employees(actor),
         "Seule l'équipe de gestion peut modifier un collaborateur.",
     )
 
-    if email is not None:
-        normalized_email = normalize_email(email)
-        existing_id = session.scalar(
-            select(Employee.id).where(
-                Employee.email == normalized_email,
-                Employee.id != employee.id,
-            )
-        )
-        if existing_id is not None:
-            raise DuplicateEmailError("Cette adresse email est déjà utilisée.")
-        employee.email = normalized_email
+    new_name = employee.full_name if full_name is _UNSET else _validate_name(full_name)
+    new_email = (
+        employee.email if email is _UNSET
+        else _validate_email(session, email, employee.id)
+    )
+    new_role = employee.role if role_code is _UNSET else _get_role(session, role_code)
+    if new_role.id != employee.role_id:
+        _protect_last_manager(session, employee)
 
-    if full_name is not None:
-        employee.full_name = full_name.strip()
-
-    if role_code is not None:
-        new_role = _get_role(session, role_code)
-        if new_role.id != employee.role_id:
-            _protect_last_manager(session, employee)
-            employee.role = new_role
+    employee.full_name = new_name
+    employee.email = new_email
+    employee.role = new_role
 
     session.flush()
     return employee
@@ -172,24 +205,29 @@ def delete_employee(
     )
     require(actor.id != employee.id, "Tu ne peux pas supprimer ton propre compte.")
     _protect_last_manager(session, employee)
+    if employee.sales_clients or employee.supported_events:
+        raise EmployeeValidationError(
+            "Ce compte possède des clients ou événements. Désactive-le plutôt."
+        )
     session.delete(employee)
+    session.flush()
 
 
 def _protect_last_manager(session: Session, employee: Employee) -> None:
     if employee.role.code != "MANAGEMENT" or not employee.is_active:
         return
 
-    other_manager_count = session.scalar(
-        select(func.count())
-        .select_from(Employee)
-        .join(Role, Employee.role_id == Role.id)
+    session.scalar(select(Role.id).where(Role.id == employee.role_id).with_for_update())
+    other_manager_id = session.scalar(
+        select(Employee.id)
         .where(
-            Role.code == "MANAGEMENT",
+            Employee.role_id == employee.role_id,
             Employee.is_active.is_(True),
             Employee.id != employee.id,
         )
+        .with_for_update()
     )
-    if other_manager_count == 0:
+    if other_manager_id is None:
         raise AuthorizationError(
             "Impossible de retirer ou désactiver le dernier manager actif."
         )
