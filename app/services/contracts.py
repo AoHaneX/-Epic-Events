@@ -3,12 +3,14 @@
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
+from app.monitoring import queue_audit
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.auth_session import get_current_user
 from app.models import Client, Contract, Employee
-from app.services import BusinessError
+from app.services import BusinessError, validate_identifier
 from app.permissions import (
     can_create_contract,
     can_read_business_data,
@@ -116,6 +118,8 @@ def create_contract(
     )
     session.add(contract)
     session.flush()
+    if is_signed:
+        queue_audit(session, "contract.signed", actor.id, contract.id)
     return contract
 
 
@@ -130,6 +134,7 @@ def update_contract(
     is_signed=_UNSET,
     signed_at=_UNSET,
 ) -> Contract:
+    validate_identifier(contract_id, ContractValidationError)
     contract = session.scalar(
         select(Contract).options(joinedload(Contract.client))
         .where(Contract.id == contract_id).with_for_update()
@@ -149,10 +154,13 @@ def update_contract(
     date = contract.signed_at if signed_at is _UNSET else signed_at
     total, remaining = _validate_values(total, remaining, signed, date)
 
+    newly_signed = signed and not contract.is_signed
     contract.client = client
     contract.total_amount = total
     contract.remaining_amount = remaining
     contract.is_signed = signed
     contract.signed_at = date
     session.flush()
+    if newly_signed:
+        queue_audit(session, "contract.signed", actor.id, contract.id)
     return contract

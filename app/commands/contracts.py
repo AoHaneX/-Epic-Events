@@ -6,7 +6,7 @@ from app.services.contracts import create_contract, update_contract
 from app.auth_session import get_current_user
 from app.commands import (
     CommandInputError, ask_identifier, boolean_value, collect_fields,
-    date_value, money_value, nullable,
+    date_value, identifier_value, money_value, nullable,
 )
 
 
@@ -42,7 +42,7 @@ def main(action="list", **options) -> None:
         return
     if action == "create":
         values = collect_fields(options, [
-            ("client_id", "Identifiant du client", int),
+            ("client_id", "Identifiant du client", identifier_value),
             ("total_amount", "Montant total", money_value),
             ("remaining_amount", "Restant à payer", money_value),
             ("is_signed", "Contrat signé (oui/non)", boolean_value),

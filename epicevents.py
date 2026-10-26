@@ -1,9 +1,10 @@
 """Epic Events command-line entry point."""
 
 import argparse
+from app import monitoring
 from importlib import import_module
 
-from app.commands import CommandInputError, date_value, money_value, nullable
+from app.commands import CommandInputError, date_value, identifier_value, money_value, nullable
 
 
 COMMANDS = {
@@ -45,7 +46,7 @@ def _add_fields(parser, entity, action):
         fields = [("full_name", str), ("email", str), ("role_code", str)]
     elif entity == "contracts":
         fields = [
-            ("client_id", int), ("total_amount", money_value),
+            ("client_id", identifier_value), ("total_amount", money_value),
             ("remaining_amount", money_value), ("signed_at", nullable(date_value)),
         ]
         parser.add_argument(
@@ -54,14 +55,14 @@ def _add_fields(parser, entity, action):
         )
     else:
         fields = [
-            ("contract_id", int), ("name", str),
+            ("contract_id", identifier_value), ("name", str),
             ("contact_name", nullable(str)), ("contact_email", nullable(str)),
             ("contact_phone", nullable(str)), ("start_at", date_value),
             ("end_at", date_value), ("location", str),
             ("attendees_count", int), ("notes", nullable(str)),
         ]
         if action == "update":
-            fields.append(("support_contact_id", nullable(int)))
+            fields.append(("support_contact_id", nullable(identifier_value)))
     for field, converter in fields:
         parser.add_argument(
             "--" + field.replace("_", "-"), type=converter,
@@ -69,7 +70,7 @@ def _add_fields(parser, entity, action):
         )
 
 
-def main() -> None:
+def _main() -> None:
     parser = argparse.ArgumentParser(
         prog="epicevents",
         description="CRM Epic Events. Utilise none pour effacer un champ nullable.",
@@ -87,7 +88,7 @@ def main() -> None:
             if action == "list":
                 _add_filters(action_parser, entity)
             elif action != "create":
-                action_parser.add_argument("id", type=int, nargs="?")
+                action_parser.add_argument("id", type=identifier_value, nargs="?")
             _add_fields(action_parser, entity, action)
     options = vars(parser.parse_args())
     command = options.pop("command")
@@ -101,6 +102,7 @@ def main() -> None:
     from app.permissions import AuthorizationError
     from app.security import PasswordPolicyError
     from app.services import BusinessError
+    from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
     try:
         command_module = import_module(module_name)
@@ -108,6 +110,23 @@ def main() -> None:
     except (AuthorizationError, AuthSessionError, BusinessError,
             CommandInputError, PasswordPolicyError) as error:
         parser.exit(1, f"Erreur : {error}\n")
+    except IntegrityError as error:
+        monitoring.capture_exception(error)
+        parser.exit(1, "Erreur : données incompatibles avec la base (doublon ou relation invalide). Vérifie les valeurs saisies.\n")
+    except SQLAlchemyError as error:
+        monitoring.capture_exception(error)
+        parser.exit(1, "Erreur : opération impossible dans la base de données. Vérifie la connexion et la configuration ; contacte un administrateur si le problème persiste.\n")
+
+
+def main() -> None:
+    monitoring.initialize()
+    try:
+        _main()
+    except Exception as error:
+        monitoring.capture_exception(error)
+        raise
+    finally:
+        monitoring.flush()
 
 
 if __name__ == "__main__":

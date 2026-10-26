@@ -4,7 +4,7 @@ from app.database import SessionLocal
 from app.services.events import list_events
 from app.services.events import create_event, update_event
 from app.auth_session import get_current_user
-from app.commands import CommandInputError, ask_identifier, collect_fields, date_value, nullable
+from app.commands import CommandInputError, ask_identifier, collect_fields, date_value, identifier_value, nullable
 
 
 def show_list(*, without_support: bool = False, mine: bool = False) -> None:
@@ -42,7 +42,7 @@ def main(action="list", **options) -> None:
         return
     if action == "create":
         values = collect_fields(options, [
-            ("contract_id", "Identifiant du contrat", int),
+            ("contract_id", "Identifiant du contrat", identifier_value),
             ("name", "Nom de l'événement", str),
             ("contact_name", "Nom du contact (facultatif)", nullable(str)),
             ("contact_email", "Email du contact (facultatif si téléphone)", nullable(str)),

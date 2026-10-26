@@ -130,4 +130,14 @@ neutralisent la lecture de `.env` et ne se connectent pas à MySQL.
 La compilation test de `BIGINT` en `INTEGER` fournit l'autoincrément SQLite,
 sans modifier les modèles MySQL. Les verrous et les écritures concurrentes
 doivent encore être vérifiés sur un MySQL de développement distinct.
+Les identifiants saisis doivent être des entiers strictement positifs, y compris
+dans les invites interactives. Les erreurs SQLAlchemy sont présentées sans
+requête SQL ni détails de connexion ; une erreur entraîne l'annulation de la
+transaction en cours.
+
 Aucun outil de lint ou de formatage n'est configuré dans ce dépôt.
+
+## Journalisation Sentry
+
+Voir [docs/SENTRY.md](docs/SENTRY.md) pour la configuration, les événements,
+les protections des données et la recette de validation.

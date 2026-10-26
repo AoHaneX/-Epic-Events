@@ -9,6 +9,16 @@ class CommandInputError(ValueError):
     pass
 
 
+def identifier_value(value: str) -> int:
+    try:
+        identifier = int(value)
+    except (TypeError, ValueError) as error:
+        raise argparse.ArgumentTypeError("Identifiant attendu : entier strictement positif.") from error
+    if identifier <= 0:
+        raise argparse.ArgumentTypeError("Identifiant attendu : entier strictement positif.")
+    return identifier
+
+
 def date_value(value: str) -> datetime:
     try:
         return datetime.fromisoformat(value)
@@ -49,4 +59,4 @@ def collect_fields(options: dict, fields: list) -> dict:
 
 
 def ask_identifier(label: str) -> int:
-    return collect_fields({}, [("id", label, int)])["id"]
+    return collect_fields({}, [("id", label, identifier_value)])["id"]

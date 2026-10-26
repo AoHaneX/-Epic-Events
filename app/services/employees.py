@@ -2,6 +2,8 @@
 
 import re
 
+from app.monitoring import queue_audit
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -9,7 +11,7 @@ from app.auth import normalize_email
 from app.models import Employee, Role
 from app.permissions import AuthorizationError, can_manage_employees, require
 from app.security import hash_password
-from app.services import BusinessError
+from app.services import BusinessError, validate_identifier
 
 
 _UNSET = object()
@@ -59,6 +61,7 @@ def list_employees(session: Session, actor: Employee) -> list[Employee]:
 
 
 def get_employee(session: Session, employee_id: int) -> Employee:
+    validate_identifier(employee_id, EmployeeValidationError)
     employee = session.get(Employee, employee_id)
     if employee is None:
         raise EmployeeNotFoundError(f"Collaborateur #{employee_id} introuvable.")
@@ -99,6 +102,7 @@ def create_initial_manager(
     )
     session.add(manager)
     session.flush()
+    queue_audit(session, "employee.created", manager.id, manager.id)
     return manager
 
 
@@ -125,6 +129,7 @@ def create_employee(
     )
     session.add(employee)
     session.flush()
+    queue_audit(session, "employee.created", actor.id, employee.id)
     return employee
 
 
@@ -156,6 +161,7 @@ def update_employee(
     employee.role = new_role
 
     session.flush()
+    queue_audit(session, "employee.updated", actor.id, employee.id)
     return employee
 
 
@@ -175,6 +181,7 @@ def change_password(
     )
     employee.password_hash = hash_password(new_password)
     session.flush()
+    queue_audit(session, "employee.password_changed", actor.id, employee.id)
 
 
 def deactivate_employee(
@@ -191,6 +198,7 @@ def deactivate_employee(
     _protect_last_manager(session, employee)
     employee.is_active = False
     session.flush()
+    queue_audit(session, "employee.deactivated", actor.id, employee.id)
 
 
 def delete_employee(
@@ -211,6 +219,7 @@ def delete_employee(
         )
     session.delete(employee)
     session.flush()
+    queue_audit(session, "employee.deleted", actor.id, employee.id)
 
 
 def _protect_last_manager(session: Session, employee: Employee) -> None:

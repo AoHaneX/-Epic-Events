@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.auth_session import get_current_user
 from app.models import Contract, Event, Employee
 from app.auth import normalize_email
-from app.services import BusinessError
+from app.services import BusinessError, validate_identifier
 from app.permissions import (
     SUPPORT_ROLE,
     can_assign_support,
@@ -208,6 +208,7 @@ def update_event(
     attendees_count=_UNSET,
     notes=_UNSET,
 ) -> Event:
+    validate_identifier(event_id, EventValidationError)
     event = session.scalar(select(Event).where(Event.id == event_id).with_for_update())
     if event is None:
         raise EventNotFoundError(f"Événement #{event_id} introuvable.")
