@@ -80,7 +80,10 @@ python epicevents.py status
 
 `create-manager` demande le nom, l'email et le mot de passe du premier
 collaborateur ; il exige une table `employees` vide.
-Le [schéma de la base](docs/mermaid-diagram.png) accompagne les modèles.
+Le [schéma de la base de données](docs/database-schema.md) détaille les cinq
+tables, leurs relations et contraintes ([image](docs/database-schema.png)) ;
+le [schéma d'architecture](docs/mermaid-diagram.png) montre l'enchaînement des
+modules d'authentification.
 
 ## Organisation
 
