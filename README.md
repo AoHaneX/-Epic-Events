@@ -1,10 +1,15 @@
-# Epic Events CRM — démarrage SQLAlchemy
+# Epic Events CRM
 
-Ce squelette connecte Python à la base MySQL `epic_events` et mappe les tables
-`employees`, `clients`, `contracts` et `events` avec SQLAlchemy 2.
+Application Python en ligne de commande avec authentification, permissions
+et journalisation Sentry. SQLAlchemy 2 relie les cinq tables MySQL :
+`roles`, `employees`, `clients`, `contracts` et `events`.
+La création et la modification des clients restent à implémenter ; leur
+consultation est disponible.
 
 ## Installation sous PowerShell
 
+Prérequis : Python 3.10 ou supérieur et un serveur MySQL 8.0 ou supérieur
+(les modèles utilisent la collation `utf8mb4_0900_ai_ci`).
 Depuis le dossier du projet :
 
 ```powershell
@@ -22,23 +27,67 @@ d'authentification.
 Ne jamais envoyer le fichier `.env` sur GitHub. Il est déjà présent dans
 `.gitignore`.
 
-## Vérification
+## Préparer MySQL
+
+Pour une installation locale neuve, ouvrir le client MySQL avec un compte
+administrateur (`mysql -u root -p`, si ce compte existe sur ton installation),
+puis exécuter le SQL suivant. Remplacer le mot de passe d'exemple par une
+valeur personnelle avant exécution ; ne pas enregistrer cette valeur dans Git.
+
+```sql
+CREATE DATABASE epic_events CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE USER 'epic_events_app'@'localhost' IDENTIFIED BY 'REMPLACER_PAR_UN_MOT_DE_PASSE';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, REFERENCES
+ON epic_events.* TO 'epic_events_app'@'localhost';
+```
+
+Si la base ou le compte existe déjà, réutiliser la configuration existante.
+Dans `.env`, vérifier `DB_USER=epic_events_app`, `DB_HOST=localhost`,
+`DB_PORT=3306`, `DB_NAME=epic_events` et renseigner le même `DB_PASSWORD`.
+Le compte applicatif est limité à cette base et ne possède aucun droit
+d'administration des comptes MySQL.
+
+## Initialiser et démarrer
 
 ```powershell
 python -m app.main
 ```
 
-Le programme doit afficher une connexion réussie, la base `epic_events` et les
-quatre tables. `Base.metadata.create_all()` crée les tables manquantes mais ne
+Le programme crée les tables manquantes et ajoute les rôles `MANAGEMENT`,
+`SALES` et `SUPPORT` absents. Un second lancement conserve les rôles existants,
+leurs identifiants et leurs libellés, sans doublon. Lancer l'initialisation
+une seule fois à la fois, avant d'utiliser le CRM.
+Il affiche une connexion réussie, la base `epic_events` et les cinq tables.
+`Base.metadata.create_all()` crée les tables manquantes mais ne
 met pas à jour une table existante. Les futures évolutions du schéma devront
 être gérées avec Alembic.
+
+Une fois l'initialisation réussie, le compte administrateur MySQL peut retirer
+les droits de création au compte applicatif :
+
+```sql
+REVOKE CREATE, REFERENCES ON epic_events.* FROM 'epic_events_app'@'localhost';
+```
+
+Réattribuer ces droits avant une initialisation qui doit créer de nouvelles
+tables. Générer le secret JWT selon [README_AUTH.md](README_AUTH.md), puis :
+
+```powershell
+python epicevents.py create-manager
+python epicevents.py login
+python epicevents.py status
+```
+
+`create-manager` demande le nom, l'email et le mot de passe du premier
+collaborateur ; il exige une table `employees` vide.
+Le [schéma de la base](docs/mermaid-diagram.png) accompagne les modèles.
 
 ## Organisation
 
 ```text
 app/database.py  configuration de SQLAlchemy et des sessions
-app/models.py    classes ORM Employee, Client, Contract et Event
-app/main.py      test de connexion et détection des tables
+app/models.py    classes ORM Role, Employee, Client, Contract et Event
+app/main.py      initialisation des tables et rôles, vérification MySQL
 ```
 
 ## Services et commandes métier

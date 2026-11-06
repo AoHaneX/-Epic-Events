@@ -1,13 +1,28 @@
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from app.database import Base, engine
-import app.models  # noqa: F401  # enregistre les modèles dans Base.metadata
+from app.models import Role
+
+
+def initialize_database(bind) -> None:
+    """Create missing tables and roles without replacing existing data."""
+    Base.metadata.create_all(bind=bind)
+    with Session(bind) as session, session.begin():
+        existing_codes = set(session.scalars(select(Role.code)))
+        for code, name in (
+            ("MANAGEMENT", "Gestion"),
+            ("SALES", "Commercial"),
+            ("SUPPORT", "Support"),
+        ):
+            if code not in existing_codes:
+                session.add(Role(code=code, name=name))
 
 
 def check_database() -> None:
     """Crée les tables manquantes puis affiche l'état de la connexion."""
-    Base.metadata.create_all(bind=engine)
+    initialize_database(engine)
 
     with engine.connect() as connection:
         current_user, database_name, version = connection.execute(
