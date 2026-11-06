@@ -1,7 +1,11 @@
-"""Display all clients available to the authenticated employee."""
+"""Client commands: list, create and update."""
 
+from app.auth_session import get_current_user
+from app.commands import (
+    CommandInputError, ask_identifier, collect_fields, date_value, nullable,
+)
 from app.database import SessionLocal
-from app.services.clients import list_clients
+from app.services.clients import create_client, list_clients, update_client
 
 
 def show_list() -> None:
@@ -31,5 +35,28 @@ def show_list() -> None:
         print()
 
 
-def main(action="list") -> None:
-    show_list()
+def main(action="list", **options) -> None:
+    if action == "list":
+        show_list()
+        return
+    if action == "create":
+        values = collect_fields(options, [
+            ("full_name", "Nom complet", str),
+            ("email", "Email", str),
+            ("phone", "Téléphone", str),
+            ("company_name", "Entreprise", str),
+            ("last_contact_at", "Dernier contact (AAAA-MM-JJTHH:MM, vide si aucun)", nullable(date_value)),
+        ])
+        with SessionLocal.begin() as session:
+            actor = get_current_user(session)
+            client = create_client(session, actor, **values)
+    else:
+        client_id = options.pop("id", None)
+        if client_id is None:
+            client_id = ask_identifier("Identifiant du client")
+        if not options:
+            raise CommandInputError("Indique au moins un champ à modifier (voir clients update --help).")
+        with SessionLocal.begin() as session:
+            actor = get_current_user(session)
+            client = update_client(session, actor, client_id, **options)
+    print(f"Client #{client.id} {'créé' if action == 'create' else 'modifié'}.")

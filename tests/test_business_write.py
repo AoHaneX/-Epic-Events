@@ -13,7 +13,7 @@ from test_business_read import BusinessReadFixture
 from app.models import Client, Contract, Employee, Event
 from app.permissions import AuthorizationError
 from app.security import PasswordPolicyError, verify_password
-from app.services import contracts, employees, events
+from app.services import clients, contracts, employees, events
 import epicevents
 
 
@@ -398,6 +398,117 @@ class EventWriteTests(BusinessWriteFixture):
         self.assert_no_writes()
 
 
+class ClientWriteTests(BusinessWriteFixture):
+    def client_values(self, **changes):
+        values = dict(full_name=" Kevin Casey ", email=" Kevin@Startup.Invalid ",
+                      phone=" +678 123 456 78 ", company_name=" Cool Startup LLC ",
+                      last_contact_at=None)
+        values.update(changes)
+        return values
+
+    def test_sales_creates_client_automatically_assigned(self):
+        with self.SessionLocal.begin() as session:
+            client = clients.create_client(session, self.actor(session, 2), **self.client_values())
+            client_id = client.id
+        with self.SessionLocal() as session:
+            record = session.get(Client, client_id)
+            self.assertEqual(record.sales_contact_id, 2)
+            self.assertEqual(record.full_name, "Kevin Casey")
+            self.assertEqual(record.email, "kevin@startup.invalid")
+            self.assertEqual(record.phone, "+678 123 456 78")
+            self.assertEqual(record.company_name, "Cool Startup LLC")
+            self.assertIsNone(record.last_contact_at)
+            self.assertIsNotNone(record.created_at)
+
+    def test_only_active_sales_can_create(self):
+        for employee_id in (1, 3, 6):
+            with self.subTest(employee_id=employee_id):
+                with self.SessionLocal.begin() as session:
+                    with self.assertRaises(AuthorizationError):
+                        clients.create_client(session, self.actor(session, employee_id),
+                                              **self.client_values())
+                    self.assertFalse(session.new)
+        self.assert_no_writes()
+
+    def test_invalid_creates_do_not_write(self):
+        cases = [
+            ({"full_name": " "}, clients.ClientValidationError),
+            ({"full_name": None}, clients.ClientValidationError),
+            ({"full_name": "x" * 151}, clients.ClientValidationError),
+            ({"email": "invalid"}, clients.ClientValidationError),
+            ({"email": None}, clients.ClientValidationError),
+            ({"email": " CLIENT20@example.invalid "}, clients.DuplicateClientEmailError),
+            ({"phone": ""}, clients.ClientValidationError),
+            ({"phone": "abc123456"}, clients.ClientValidationError),
+            ({"phone": "+33 12"}, clients.ClientValidationError),
+            ({"phone": "1" * 33}, clients.ClientValidationError),
+            ({"company_name": ""}, clients.ClientValidationError),
+            ({"company_name": "x" * 201}, clients.ClientValidationError),
+            ({"last_contact_at": datetime(2026, 1, 1, tzinfo=timezone.utc)}, clients.ClientValidationError),
+            ({"last_contact_at": "2026-01-01"}, clients.ClientValidationError),
+        ]
+        for changes, expected in cases:
+            with self.subTest(changes=changes):
+                with self.SessionLocal.begin() as session:
+                    with self.assertRaises(expected):
+                        clients.create_client(session, self.actor(session, 2),
+                                              **self.client_values(**changes))
+                    self.assertFalse(session.new)
+        self.assert_no_writes()
+
+    def test_sales_updates_own_client_and_keeps_omitted_fields(self):
+        contact = datetime(2026, 11, 2, 9, 30)
+        with self.SessionLocal.begin() as session:
+            clients.update_client(session, self.actor(session, 2), 10,
+                                  phone="+33 6 12 34 56 78", email=" Client10@Example.Invalid ",
+                                  last_contact_at=contact)
+        with self.SessionLocal() as session:
+            record = session.get(Client, 10)
+            self.assertEqual(record.phone, "+33 6 12 34 56 78")
+            self.assertEqual(record.email, "client10@example.invalid")
+            self.assertEqual(record.last_contact_at, contact)
+            self.assertEqual(record.full_name, "Client Alpha")
+            self.assertEqual(record.company_name, "Entreprise 10")
+            self.assertEqual(record.sales_contact_id, 2)
+        with self.SessionLocal.begin() as session:
+            clients.update_client(session, self.actor(session, 2), 10, last_contact_at=None)
+        with self.SessionLocal() as session:
+            self.assertIsNone(session.get(Client, 10).last_contact_at)
+
+    def test_update_refused_outside_own_clients(self):
+        cases = [
+            (4, 10, AuthorizationError),
+            (1, 10, AuthorizationError),
+            (3, 10, AuthorizationError),
+            (2, 20, AuthorizationError),
+            (2, 999, clients.ClientNotFoundError),
+            (2, 0, clients.ClientValidationError),
+            (2, "10", clients.ClientValidationError),
+        ]
+        for actor_id, client_id, expected in cases:
+            with self.subTest(actor_id=actor_id, client_id=client_id):
+                with self.SessionLocal.begin() as session:
+                    with self.assertRaises(expected):
+                        clients.update_client(session, self.actor(session, actor_id), client_id,
+                                              full_name="Changed")
+        self.assert_no_writes()
+
+    def test_failed_update_is_atomic(self):
+        for changes, expected in [
+            ({"full_name": "Changed", "email": "client20@example.invalid"}, clients.DuplicateClientEmailError),
+            ({"full_name": "Changed", "phone": "none"}, clients.ClientValidationError),
+            ({"company_name": " "}, clients.ClientValidationError),
+        ]:
+            with self.subTest(changes=changes):
+                with self.SessionLocal.begin() as session:
+                    with self.assertRaises(expected):
+                        clients.update_client(session, self.actor(session, 2), 10, **changes)
+                    self.assertFalse(session.dirty)
+                with self.SessionLocal() as session:
+                    self.assertEqual(session.get(Client, 10).full_name, "Client Alpha")
+        self.assert_no_writes()
+
+
 class TransactionAndCommandTests(BusinessWriteFixture):
     def test_rollback_after_flushed_creations(self):
         with self.assertRaisesRegex(RuntimeError, "abort"):
@@ -423,9 +534,10 @@ class TransactionAndCommandTests(BusinessWriteFixture):
             self.assertEqual(session.get(Event, 1000).support_contact_id, 3)
 
     def run_cli(self, *arguments):
-        from app.commands import contracts as contract_commands, events as event_commands, employees as employee_commands
+        from app.commands import clients as client_commands, contracts as contract_commands, events as event_commands, employees as employee_commands
         output, errors = io.StringIO(), io.StringIO()
-        with (patch.object(contract_commands, "SessionLocal", self.SessionLocal),
+        with (patch.object(client_commands, "SessionLocal", self.SessionLocal),
+              patch.object(contract_commands, "SessionLocal", self.SessionLocal),
               patch.object(event_commands, "SessionLocal", self.SessionLocal),
               patch.object(employee_commands, "SessionLocal", self.SessionLocal),
               patch("sys.argv", ["epicevents.py", *arguments]),
@@ -486,6 +598,39 @@ class TransactionAndCommandTests(BusinessWriteFixture):
             self.assertEqual(record.notes, "Prévoir café")
             self.assertEqual(record.support_contact_id, 3)
             self.assertEqual(record.name, "CLI Event")
+
+    def test_client_cli_create_and_update(self):
+        self.login(2)
+        code, output, errors = self.run_cli(
+            "clients", "create", "--full-name", "Kevin Casey", "--email", "kevin@startup.invalid",
+            "--phone", "+678 123 456 78", "--company-name", "Cool Startup LLC",
+            "--last-contact-at", "none")
+        self.assertEqual(code, 0, errors)
+        self.assertIn("créé", output)
+        with self.SessionLocal() as session:
+            record = session.scalar(select(Client).where(Client.email == "kevin@startup.invalid"))
+            client_id = record.id
+            self.assertEqual(record.sales_contact_id, 2)
+        code, output, errors = self.run_cli("clients", "update", str(client_id),
+                                            "--last-contact-at", "2026-11-05T14:00")
+        self.assertEqual(code, 0, errors)
+        self.assertIn("modifié", output)
+        self.login(4)
+        code, output, errors = self.run_cli("clients", "update", str(client_id), "--phone", "+33 600000000")
+        self.assertEqual(code, 1)
+        self.assertEqual(output, "")
+        self.assertIn("propres clients", errors)
+        with self.SessionLocal() as session:
+            record = session.get(Client, client_id)
+            self.assertEqual(record.phone, "+678 123 456 78")
+            self.assertEqual(record.last_contact_at, datetime(2026, 11, 5, 14))
+
+    def test_client_cli_update_requires_a_field(self):
+        self.login(2)
+        code, output, errors = self.run_cli("clients", "update", "10")
+        self.assertEqual(code, 1)
+        self.assertIn("au moins un champ", errors)
+        self.assert_no_writes()
 
     def test_employee_interactive_create_and_password_confirmation(self):
         from app.commands import employees as command

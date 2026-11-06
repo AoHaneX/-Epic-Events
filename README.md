@@ -3,8 +3,6 @@
 Application Python en ligne de commande avec authentification, permissions
 et journalisation Sentry. SQLAlchemy 2 relie les cinq tables MySQL :
 `roles`, `employees`, `clients`, `contracts` et `events`.
-La création et la modification des clients restent à implémenter ; leur
-consultation est disponible.
 
 ## Installation sous PowerShell
 
@@ -110,6 +108,8 @@ python epicevents.py employees update 7 --full-name "Nouveau nom" --role-code SU
 python epicevents.py employees password 7
 python epicevents.py employees deactivate 7
 python epicevents.py clients list
+python epicevents.py clients create
+python epicevents.py clients update 10 --phone "+33 6 12 34 56 78" --last-contact-at 2026-11-05T14:00
 python epicevents.py contracts list --unsigned --unpaid
 python epicevents.py contracts create
 python epicevents.py contracts update 100 --client-id 20 --total-amount 1500 --remaining-amount 500
@@ -127,6 +127,7 @@ champs via options et demande l'identifiant s'il est absent. Consulter
 
 Un champ omis conserve sa valeur. `none` efface un champ nullable :
 `--signed-at none`, `--support-contact-id none`, `--notes none`,
+`--last-contact-at none`,
 `--contact-name none`, `--contact-email none`, `--contact-phone none`.
 Les relations obligatoires client/contrat ne peuvent pas être retirées.
 Un contact email ou téléphone reste obligatoire pour un événement.
@@ -147,6 +148,8 @@ python epicevents.py events update 1000 --contract-id 200
 | --- | --- |
 | Lire clients, contrats, événements | Tout collaborateur actif |
 | Gérer et lister les collaborateurs | Management |
+| Créer un client | Commercial ; le client lui est automatiquement associé |
+| Modifier un client | Commercial responsable de ce client uniquement |
 | Changer un mot de passe | Son propre compte actif, ou Management |
 | Créer un contrat | Management uniquement |
 | Modifier un contrat | Management, ou commercial du client actuel |

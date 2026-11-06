@@ -23,7 +23,7 @@ LEGACY_ACTIONS = {
 }
 ENTITIES = {
     "employees": ("list", "create", "update", "password", "deactivate", "delete"),
-    "clients": ("list",),
+    "clients": ("list", "create", "update"),
     "contracts": ("list", "create", "update"),
     "events": ("list", "create", "update"),
 }
@@ -44,6 +44,11 @@ def _add_fields(parser, entity, action):
         return
     if entity == "employees":
         fields = [("full_name", str), ("email", str), ("role_code", str)]
+    elif entity == "clients":
+        fields = [
+            ("full_name", str), ("email", str), ("phone", str),
+            ("company_name", str), ("last_contact_at", nullable(date_value)),
+        ]
     elif entity == "contracts":
         fields = [
             ("client_id", identifier_value), ("total_amount", money_value),
