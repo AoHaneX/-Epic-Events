@@ -1,8 +1,9 @@
 # Epic Events CRM
 
 Application Python en ligne de commande avec authentification, permissions
-et journalisation Sentry. SQLAlchemy 2 relie les cinq tables MySQL :
-`roles`, `employees`, `clients`, `contracts` et `events`.
+et journalisation Sentry. SQLAlchemy 2 relie les sept tables MySQL :
+`employees` et ses trois spécialisations `managers`, `sales_employees`,
+`support_employees` (héritage), puis `clients`, `contracts` et `events`.
 
 ## Installation sous PowerShell
 
@@ -51,11 +52,16 @@ d'administration des comptes MySQL.
 python -m app.main
 ```
 
-Le programme crée les tables manquantes et ajoute les rôles `MANAGEMENT`,
-`SALES` et `SUPPORT` absents. Un second lancement conserve les rôles existants,
-leurs identifiants et leurs libellés, sans doublon. Lancer l'initialisation
-une seule fois à la fois, avant d'utiliser le CRM.
-Il affiche une connexion réussie, la base `epic_events` et les cinq tables.
+Le programme crée les tables manquantes ; un second lancement conserve les
+données existantes. Il affiche une connexion réussie, la base `epic_events`
+et les sept tables.
+
+Les rôles ne sont plus des lignes d'une table `roles` : chaque département
+est une classe qui hérite de `Employee` (`Manager`, `SalesEmployee`,
+`SupportEmployee`), avec sa propre table. La colonne `employees.role` indique
+la spécialité. Une base créée avec une version précédente (table `roles`,
+colonne `role_id`) doit être recréée : `create_all()` ne modifie pas une
+table existante.
 `Base.metadata.create_all()` crée les tables manquantes mais ne
 met pas à jour une table existante. Les futures évolutions du schéma devront
 être gérées avec Alembic.
@@ -87,8 +93,9 @@ modules d'authentification.
 
 ```text
 app/database.py  configuration de SQLAlchemy et des sessions
-app/models.py    classes ORM Role, Employee, Client, Contract et Event
-app/main.py      initialisation des tables et rôles, vérification MySQL
+app/models.py    Employee et ses sous-classes Manager, SalesEmployee,
+                 SupportEmployee ; Client, Contract et Event
+app/main.py      création des tables manquantes, vérification MySQL
 ```
 
 ## Services et commandes métier
@@ -150,6 +157,7 @@ python epicevents.py events update 1000 --contract-id 200
 | Gérer et lister les collaborateurs | Management |
 | Créer un client | Commercial ; le client lui est automatiquement associé |
 | Modifier un client | Commercial responsable de ce client uniquement |
+| Changer le rôle d'un collaborateur | Management ; refusé tant qu'un commercial suit des clients ou qu'un support a des événements |
 | Changer un mot de passe | Son propre compte actif, ou Management |
 | Créer un contrat | Management uniquement |
 | Modifier un contrat | Management, ou commercial du client actuel |

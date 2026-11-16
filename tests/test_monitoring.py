@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from test_business_write import BusinessWriteFixture
 from app import monitoring
-from app.models import Employee
+from app.models import Employee, SupportEmployee
 from app.services import employees, contracts
 import epicevents
 import sentry_sdk
@@ -64,7 +64,7 @@ class AuditTests(BusinessWriteFixture):
             with self.assertRaises(IntegrityError):
                 with self.SessionLocal.begin() as session:
                     employees.update_employee(session, self.actor(session), self.actor(session, 7), full_name='Changed')
-                    session.add(Employee(full_name='Invalid'))
+                    session.add(SupportEmployee(full_name='Invalid'))
             publish.assert_not_called()
 
 

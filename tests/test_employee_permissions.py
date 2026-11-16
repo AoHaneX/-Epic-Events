@@ -17,7 +17,7 @@ with patch.dict(
         "SQL_ECHO": "false",
     },
 ), patch("dotenv.load_dotenv"):
-    from app.models import Employee, Role
+    from app.models import EMPLOYEE_CLASSES, Employee
     from app.permissions import AuthorizationError
     from app.security import hash_password, verify_password
     from app.services.employees import change_password
@@ -35,12 +35,11 @@ class ChangePasswordPermissionsTests(unittest.TestCase):
         role_code: str = "SALES",
         active: bool = True,
     ) -> Employee:
-        return Employee(
+        return EMPLOYEE_CLASSES[role_code](
             id=employee_id,
             full_name="Test Employee",
             email=f"employee{employee_id}@example.invalid",
             password_hash=self.original_hash,
-            role=Role(code=role_code, name=role_code),
             is_active=active,
         )
 

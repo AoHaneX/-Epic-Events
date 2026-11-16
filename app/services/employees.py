@@ -4,11 +4,18 @@ import re
 
 from app.monitoring import queue_audit
 
-from sqlalchemy import select
+from sqlalchemy import delete, insert, select, update
 from sqlalchemy.orm import Session
 
 from app.auth import normalize_email
-from app.models import Employee, Role
+from app.models import (
+    EMPLOYEE_CLASSES,
+    MANAGEMENT_ROLE,
+    Employee,
+    Manager,
+    SalesEmployee,
+    SupportEmployee,
+)
 from app.permissions import AuthorizationError, can_manage_employees, require
 from app.security import hash_password
 from app.services import BusinessError, validate_identifier
@@ -30,7 +37,7 @@ class DuplicateEmailError(BusinessError):
 
 
 class UnknownRoleError(BusinessError):
-    """Le rôle demandé n'existe pas dans la table roles."""
+    """Le rôle demandé ne correspond à aucun département."""
 
 
 def _validate_name(full_name: str) -> str:
@@ -68,14 +75,13 @@ def get_employee(session: Session, employee_id: int) -> Employee:
     return employee
 
 
-def _get_role(session: Session, role_code: str) -> Role:
+def _role_code(role_code: str) -> str:
     if not isinstance(role_code, str) or not role_code.strip():
         raise UnknownRoleError("Le rôle est obligatoire.")
     normalized_code = role_code.strip().upper()
-    role = session.scalar(select(Role).where(Role.code == normalized_code))
-    if role is None:
+    if normalized_code not in EMPLOYEE_CLASSES:
         raise UnknownRoleError(f"Rôle inconnu : {normalized_code}")
-    return role
+    return normalized_code
 
 
 def create_initial_manager(
@@ -86,18 +92,15 @@ def create_initial_manager(
     password: str,
 ) -> Employee:
     """Crée le tout premier compte, uniquement si la table employees est vide."""
-    role = _get_role(session, "MANAGEMENT")
-    session.scalar(select(Role.id).where(Role.id == role.id).with_for_update())
     if session.scalar(select(Employee.id).limit(1).with_for_update()) is not None:
         raise AuthorizationError(
             "Le compte initial existe déjà. Utilise un manager authentifié."
         )
 
-    manager = Employee(
+    manager = Manager(
         full_name=_validate_name(full_name),
         email=_validate_email(session, email),
         password_hash=hash_password(password),
-        role=role,
         is_active=True,
     )
     session.add(manager)
@@ -120,11 +123,13 @@ def create_employee(
         "Seule l'équipe de gestion peut créer un collaborateur.",
     )
 
-    employee = Employee(
-        full_name=_validate_name(full_name),
-        email=_validate_email(session, email),
+    employee_class = EMPLOYEE_CLASSES[_role_code(role_code)]
+    full_name = _validate_name(full_name)
+    email = _validate_email(session, email)
+    employee = employee_class(
+        full_name=full_name,
+        email=email,
         password_hash=hash_password(password),
-        role=_get_role(session, role_code),
         is_active=True,
     )
     session.add(employee)
@@ -152,17 +157,56 @@ def update_employee(
         employee.email if email is _UNSET
         else _validate_email(session, email, employee.id)
     )
-    new_role = employee.role if role_code is _UNSET else _get_role(session, role_code)
-    if new_role.id != employee.role_id:
+    new_role = employee.role if role_code is _UNSET else _role_code(role_code)
+    role_changes = new_role != employee.role
+    if role_changes:
         _protect_last_manager(session, employee)
+        _check_role_change_allowed(employee)
 
+    actor_id = actor.id
     employee.full_name = new_name
     employee.email = new_email
-    employee.role = new_role
-
     session.flush()
-    queue_audit(session, "employee.updated", actor.id, employee.id)
+    if role_changes:
+        employee = _move_to_role(session, employee, new_role)
+
+    queue_audit(session, "employee.updated", actor_id, employee.id)
     return employee
+
+
+def _check_role_change_allowed(employee: Employee) -> None:
+    """Un rôle ne change que si l'ancien rôle n'a plus de responsabilités."""
+    if isinstance(employee, SalesEmployee) and employee.clients:
+        raise EmployeeValidationError(
+            "Ce commercial suit encore des clients : impossible de changer son rôle."
+        )
+    if isinstance(employee, SupportEmployee) and employee.events:
+        raise EmployeeValidationError(
+            "Ce support est encore affecté à des événements : retire-le d'abord."
+        )
+
+
+def _move_to_role(session: Session, employee: Employee, new_role: str) -> Employee:
+    """Déplace le collaborateur de la table de son ancien rôle vers la nouvelle.
+
+    Avec l'héritage, la classe d'un objet ne peut pas changer : on supprime la
+    ligne de l'ancienne spécialité, on insère celle de la nouvelle, puis on
+    recharge le collaborateur sous sa nouvelle classe. Tout reste dans la même
+    transaction : une erreur annule l'ensemble.
+    """
+    employee_id = employee.id
+    old_table = type(employee).__table__
+    new_class = EMPLOYEE_CLASSES[new_role]
+    employees_table = Employee.__table__
+    session.execute(delete(old_table).where(old_table.c.id == employee_id))
+    session.execute(insert(new_class.__table__).values(id=employee_id))
+    session.execute(
+        update(employees_table)
+        .where(employees_table.c.id == employee_id)
+        .values(role=new_role)
+    )
+    session.expunge(employee)
+    return session.get(new_class, employee_id)
 
 
 def change_password(
@@ -213,7 +257,10 @@ def delete_employee(
     )
     require(actor.id != employee.id, "Tu ne peux pas supprimer ton propre compte.")
     _protect_last_manager(session, employee)
-    if employee.sales_clients or employee.supported_events:
+    if (
+        (isinstance(employee, SalesEmployee) and employee.clients)
+        or (isinstance(employee, SupportEmployee) and employee.events)
+    ):
         raise EmployeeValidationError(
             "Ce compte possède des clients ou événements. Désactive-le plutôt."
         )
@@ -223,20 +270,17 @@ def delete_employee(
 
 
 def _protect_last_manager(session: Session, employee: Employee) -> None:
-    if employee.role.code != "MANAGEMENT" or not employee.is_active:
+    if employee.role != MANAGEMENT_ROLE or not employee.is_active:
         return
 
-    session.scalar(select(Role.id).where(Role.id == employee.role_id).with_for_update())
-    other_manager_id = session.scalar(
+    # Verrouille tous les managers actifs : deux retraits simultanés
+    # ne peuvent pas laisser l'entreprise sans manager.
+    active_manager_ids = session.scalars(
         select(Employee.id)
-        .where(
-            Employee.role_id == employee.role_id,
-            Employee.is_active.is_(True),
-            Employee.id != employee.id,
-        )
+        .where(Employee.role == MANAGEMENT_ROLE, Employee.is_active.is_(True))
         .with_for_update()
-    )
-    if other_manager_id is None:
+    ).all()
+    if not any(manager_id != employee.id for manager_id in active_manager_ids):
         raise AuthorizationError(
             "Impossible de retirer ou désactiver le dernier manager actif."
         )

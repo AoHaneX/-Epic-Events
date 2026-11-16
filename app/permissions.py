@@ -1,11 +1,14 @@
 """Règles d'autorisation centralisées du CRM Epic Events."""
 
-from app.models import Client, Contract, Employee, Event
-
-
-MANAGEMENT_ROLE = "MANAGEMENT"
-SALES_ROLE = "SALES"
-SUPPORT_ROLE = "SUPPORT"
+from app.models import (
+    MANAGEMENT_ROLE,
+    SALES_ROLE,
+    SUPPORT_ROLE,
+    Client,
+    Contract,
+    Employee,
+    Event,
+)
 
 
 class AuthorizationError(PermissionError):
@@ -25,8 +28,7 @@ def has_role(employee: Employee, role_code: str) -> bool:
     """Vérifie qu'un collaborateur actif possède le rôle demandé."""
     return (
         is_active(employee)
-        and employee.role is not None
-        and employee.role.code == role_code
+        and employee.role == role_code
     )
 
 

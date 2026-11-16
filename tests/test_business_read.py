@@ -30,7 +30,7 @@ with patch.dict(
 ), patch("dotenv.load_dotenv"):
     from app import auth_session
     from app.database import Base
-    from app.models import Client, Contract, Employee, Event, Role
+    from app.models import EMPLOYEE_CLASSES, Client, Contract, Employee, Event
     from app.permissions import AuthorizationError
     from app.services import clients, contracts, events
 
@@ -74,30 +74,24 @@ class BusinessReadFixture(unittest.TestCase):
     def seed_database(self) -> None:
         date = datetime(2026, 10, 1, 14, 0)
         with self.SessionLocal.begin() as session:
-            roles = [
-                Role(id=1, code="MANAGEMENT", name="Gestion"),
-                Role(id=2, code="SALES", name="Commercial"),
-                Role(id=3, code="SUPPORT", name="Support"),
-            ]
-            session.add_all(roles)
             employees = [
-                (1, "Manager", 1, True),
-                (2, "Commercial Alpha", 2, True),
-                (3, "Support Alpha", 3, True),
-                (4, "Commercial Beta", 2, True),
-                (5, "Support Beta", 3, True),
-                (6, "Compte désactivé", 3, False),
-                (7, "Support sans événement", 3, True),
+                (1, "Manager", "MANAGEMENT", True),
+                (2, "Commercial Alpha", "SALES", True),
+                (3, "Support Alpha", "SUPPORT", True),
+                (4, "Commercial Beta", "SALES", True),
+                (5, "Support Beta", "SUPPORT", True),
+                (6, "Compte désactivé", "SUPPORT", False),
+                (7, "Support sans événement", "SUPPORT", True),
             ]
-            for employee_id, name, role_id, active in employees:
-                session.add(Employee(
+            for employee_id, name, role, active in employees:
+                session.add(EMPLOYEE_CLASSES[role](
                     id=employee_id,
                     full_name=name,
                     email=f"employee{employee_id}@example.invalid",
                     password_hash="unused-test-hash",
-                    role_id=role_id,
                     is_active=active,
                 ))
+            session.flush()
             for client_id, name, sales_id in [
                 (20, "Client Beta", 4), (10, "Client Alpha", 2)
             ]:

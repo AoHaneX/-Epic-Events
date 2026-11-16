@@ -16,7 +16,7 @@ def main() -> None:
             employee = authenticate(session, email, password)
             employee_id = employee.id
             full_name = employee.full_name
-            role_code = employee.role.code
+            role_code = employee.role
 
         start_session(employee_id)
     except (AuthenticationError, AuthSessionError) as error:

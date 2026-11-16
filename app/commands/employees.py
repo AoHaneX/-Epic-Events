@@ -32,21 +32,25 @@ def main(action="create", **options) -> None:
             else:
                 actor = get_current_user(session)
                 employee = employees.create_employee(session, actor, **values)
-        print(f"Compte créé : {employee.email} ({employee.role.code})")
+        print(f"Compte créé : {employee.email} ({employee.role})")
         return
     if action == "list":
         with SessionLocal() as session:
             actor = get_current_user(session)
             rows = employees.list_employees(session, actor)
         for employee in rows:
-            print(f"#{employee.id} : {employee.full_name} — {employee.email} "
-                  f"({employee.role.code}, {'actif' if employee.is_active else 'inactif'})")
+            print(
+                f"#{employee.id} : {employee.full_name} — {employee.email} "
+                f"({employee.role}, {'actif' if employee.is_active else 'inactif'})"
+            )
         return
     employee_id = options.pop("id", None)
     if employee_id is None:
         employee_id = ask_identifier("Identifiant du collaborateur")
     if action == "update" and not options:
-        raise CommandInputError("Indique au moins un champ à modifier (voir employees update --help).")
+        raise CommandInputError(
+            "Indique au moins un champ à modifier (voir employees update --help)."
+        )
     new_password = ask_confirmed_password() if action == "password" else None
     with SessionLocal.begin() as session:
         actor = get_current_user(session)

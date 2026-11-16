@@ -1,23 +1,17 @@
-from sqlalchemy import inspect, select, text
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
 
 from app.database import Base, engine
-from app.models import Role
+import app.models  # noqa: F401  # enregistre les modèles dans Base.metadata
 
 
 def initialize_database(bind) -> None:
-    """Create missing tables and roles without replacing existing data."""
+    """Create missing tables without replacing existing data.
+
+    Les rôles ne sont plus des lignes à créer : ce sont les classes Manager,
+    SalesEmployee et SupportEmployee, chacune avec sa table.
+    """
     Base.metadata.create_all(bind=bind)
-    with Session(bind) as session, session.begin():
-        existing_codes = set(session.scalars(select(Role.code)))
-        for code, name in (
-            ("MANAGEMENT", "Gestion"),
-            ("SALES", "Commercial"),
-            ("SUPPORT", "Support"),
-        ):
-            if code not in existing_codes:
-                session.add(Role(code=code, name=name))
 
 
 def check_database() -> None:

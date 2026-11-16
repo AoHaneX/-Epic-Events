@@ -6,11 +6,12 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects.mysql import BIGINT
 from sqlalchemy.ext.compiler import compiles
 
 from test_business_read import BusinessReadFixture
-from app.models import Client, Contract, Employee, Event
+from app.models import Client, Contract, Employee, Event, SalesEmployee, SupportEmployee
 from app.permissions import AuthorizationError
 from app.security import PasswordPolicyError, verify_password
 from app.services import clients, contracts, employees, events
@@ -72,7 +73,7 @@ class EmployeeWriteTests(BusinessWriteFixture):
                                       full_name="Support Nouveau", email=" Changed@Example.Invalid ")
         with self.SessionLocal() as session:
             employee = session.get(Employee, employee_id)
-            self.assertEqual(employee.role.code, "SUPPORT")
+            self.assertEqual(employee.role, "SUPPORT")
             self.assertEqual(employee.email, "changed@example.invalid")
             self.assertEqual(employee.full_name, "Support Nouveau")
 
@@ -121,7 +122,7 @@ class EmployeeWriteTests(BusinessWriteFixture):
                 employees.update_employee(session, manager, manager,
                                           full_name="Changed", role_code="SALES")
             self.assertEqual(manager.full_name, "Manager")
-            self.assertEqual(manager.role.code, "MANAGEMENT")
+            self.assertEqual(manager.role, "MANAGEMENT")
             self.assertFalse(session.dirty)
         self.assert_no_writes()
 
@@ -138,8 +139,9 @@ class EmployeeWriteTests(BusinessWriteFixture):
         with self.SessionLocal.begin() as session:
             manager = self.actor(session)
             employees.update_employee(session, manager, self.actor(session, 7), role_code="MANAGEMENT")
-            employees.update_employee(session, manager, manager, role_code="SALES")
-            self.assertEqual(manager.role.code, "SALES")
+            manager = employees.update_employee(session, manager, manager, role_code="SALES")
+            self.assertEqual(manager.role, "SALES")
+            self.assertIsInstance(manager, SalesEmployee)
 
     def test_deactivate_delete_and_linked_employee_protection(self):
         with self.SessionLocal.begin() as session:
@@ -166,19 +168,62 @@ class EmployeeWriteTests(BusinessWriteFixture):
 
     def test_initial_manager_validates_and_bootstrap_cannot_repeat(self):
         with self.SessionLocal.begin() as session:
-            for model in (Event, Contract, Client, Employee):
+            for model in (Event, Contract, Client):
                 session.query(model).delete(synchronize_session=False)
+            for table in ("managers", "sales_employees", "support_employees", "employees"):
+                session.execute(text(f"DELETE FROM {table}"))
         with self.SessionLocal.begin() as session:
             with self.assertRaises(employees.EmployeeValidationError):
                 employees.create_initial_manager(session, full_name=" ", email="x@example.invalid",
                                                  password="Strong-password-2026")
             manager = employees.create_initial_manager(session, full_name=" First ",
                                                        email=" FIRST@EXAMPLE.INVALID ", password="Strong-password-2026")
-            self.assertEqual(manager.role.code, "MANAGEMENT")
+            self.assertEqual(manager.role, "MANAGEMENT")
             self.assertEqual(manager.email, "first@example.invalid")
             with self.assertRaises(AuthorizationError):
                 employees.create_initial_manager(session, full_name="Second", email="second@example.invalid",
                                                  password="Strong-password-2026")
+
+
+class EmployeeInheritanceTests(BusinessWriteFixture):
+    def test_each_role_is_its_own_class_and_table(self):
+        with self.SessionLocal() as session:
+            self.assertIsInstance(session.get(Employee, 1), employees.Manager)
+            self.assertIsInstance(session.get(Employee, 2), SalesEmployee)
+            self.assertIsInstance(session.get(Employee, 3), SupportEmployee)
+            rows = session.execute(text("SELECT id FROM sales_employees ORDER BY id")).scalars().all()
+            self.assertEqual(rows, [2, 4])
+
+    def test_role_change_moves_employee_between_tables(self):
+        with self.SessionLocal.begin() as session:
+            moved = employees.update_employee(session, self.actor(session), self.actor(session, 7),
+                                              role_code="SALES", full_name="Nouveau commercial")
+            self.assertIsInstance(moved, SalesEmployee)
+        with self.SessionLocal() as session:
+            record = session.get(Employee, 7)
+            self.assertIsInstance(record, SalesEmployee)
+            self.assertEqual(record.full_name, "Nouveau commercial")
+            self.assertEqual(session.execute(text("SELECT COUNT(*) FROM support_employees WHERE id = 7")).scalar(), 0)
+            self.assertEqual(session.execute(text("SELECT COUNT(*) FROM sales_employees WHERE id = 7")).scalar(), 1)
+
+    def test_role_change_refused_while_responsibilities_remain(self):
+        for employee_id in (2, 3):
+            with self.subTest(employee_id=employee_id):
+                with self.SessionLocal.begin() as session:
+                    with self.assertRaises(employees.EmployeeValidationError):
+                        employees.update_employee(session, self.actor(session), self.actor(session, employee_id),
+                                                  role_code="MANAGEMENT", full_name="Changed")
+                with self.SessionLocal() as session:
+                    self.assertNotEqual(session.get(Employee, employee_id).full_name, "Changed")
+        self.assert_no_writes()
+
+    def test_database_refuses_non_sales_as_client_contact(self):
+        with self.assertRaises(IntegrityError):
+            with self.SessionLocal.begin() as session:
+                session.execute(text(
+                    "INSERT INTO clients (full_name, email, phone, company_name, sales_contact_id, "
+                    "created_at, updated_at) VALUES ('X', 'x@example.invalid', '+33 100000000', 'X', 3, "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"))
 
 
 class ContractWriteTests(BusinessWriteFixture):
@@ -561,7 +606,7 @@ class TransactionAndCommandTests(BusinessWriteFixture):
         code, _, errors = self.run_cli("events", "update", "1000", "--support-contact-id", "none")
         self.assertEqual(code, 0, errors)
         with self.SessionLocal() as session:
-            self.assertEqual(self.actor(session, 7).role.code, "SALES")
+            self.assertEqual(self.actor(session, 7).role, "SALES")
             record = session.get(Event, 1000)
             self.assertIsNone(record.support_contact_id)
             self.assertEqual(record.notes, "Prévoir un accueil.")

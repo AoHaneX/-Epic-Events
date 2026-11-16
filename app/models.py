@@ -23,34 +23,34 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 
-class Role(Base):
-    """Rôle applicatif attribué à un ou plusieurs collaborateurs."""
+MYSQL_TABLE_OPTIONS = {
+    "mysql_engine": "InnoDB",
+    "mysql_charset": "utf8mb4",
+    "mysql_collate": "utf8mb4_0900_ai_ci",
+}
 
-    __tablename__ = "roles"
-    __table_args__ = {
-        "mysql_engine": "InnoDB",
-        "mysql_charset": "utf8mb4",
-        "mysql_collate": "utf8mb4_0900_ai_ci",
-    }
-
-    id: Mapped[int] = mapped_column(
-        BIGINT(unsigned=True), primary_key=True, autoincrement=True
-    )
-    code: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
-    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
-
-    employees: Mapped[list[Employee]] = relationship(back_populates="role")
+MANAGEMENT_ROLE = "MANAGEMENT"
+SALES_ROLE = "SALES"
+SUPPORT_ROLE = "SUPPORT"
+ROLE_CODES = (MANAGEMENT_ROLE, SALES_ROLE, SUPPORT_ROLE)
 
 
 class Employee(Base):
+    """Collaborateur : données communes aux trois départements.
+
+    Héritage par tables jointes : chaque collaborateur a une ligne ici et une
+    ligne dans la table de sa spécialité (managers, sales_employees,
+    support_employees). La colonne ``role`` indique laquelle.
+    """
+
     __tablename__ = "employees"
     __table_args__ = (
-        Index("idx_employees_role_id", "role_id"),
-        {
-            "mysql_engine": "InnoDB",
-            "mysql_charset": "utf8mb4",
-            "mysql_collate": "utf8mb4_0900_ai_ci",
-        },
+        CheckConstraint(
+            "role IN ('MANAGEMENT', 'SALES', 'SUPPORT')",
+            name="chk_employees_role",
+        ),
+        Index("idx_employees_role", "role"),
+        MYSQL_TABLE_OPTIONS,
     )
 
     id: Mapped[int] = mapped_column(
@@ -59,16 +59,7 @@ class Employee(Base):
     full_name: Mapped[str] = mapped_column(String(150), nullable=False)
     email: Mapped[str] = mapped_column(String(254), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    role_id: Mapped[int] = mapped_column(
-        BIGINT(unsigned=True),
-        ForeignKey(
-            "roles.id",
-            name="fk_employees_role",
-            ondelete="RESTRICT",
-            onupdate="RESTRICT",
-        ),
-        nullable=False,
-    )
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=text("1")
     )
@@ -82,15 +73,55 @@ class Employee(Base):
         onupdate=func.current_timestamp(),
     )
 
-    role: Mapped[Role] = relationship(back_populates="employees", lazy="joined")
-    sales_clients: Mapped[list[Client]] = relationship(
-        back_populates="sales_contact",
-        foreign_keys="Client.sales_contact_id",
+    __mapper_args__ = {"polymorphic_on": "role", "polymorphic_abstract": True}
+
+
+def _specialization_id() -> Mapped[int]:
+    """Clé primaire d'une spécialité, qui est aussi la clé du collaborateur."""
+    return mapped_column(
+        BIGINT(unsigned=True),
+        ForeignKey("employees.id", ondelete="CASCADE", onupdate="RESTRICT"),
+        primary_key=True,
     )
-    supported_events: Mapped[list[Event]] = relationship(
-        back_populates="support_contact",
-        foreign_keys="Event.support_contact_id",
-    )
+
+
+class Manager(Employee):
+    """Membre du département gestion."""
+
+    __tablename__ = "managers"
+    __table_args__ = MYSQL_TABLE_OPTIONS
+    __mapper_args__ = {"polymorphic_identity": MANAGEMENT_ROLE}
+
+    id: Mapped[int] = _specialization_id()
+
+
+class SalesEmployee(Employee):
+    """Commercial : il suit des clients."""
+
+    __tablename__ = "sales_employees"
+    __table_args__ = MYSQL_TABLE_OPTIONS
+    __mapper_args__ = {"polymorphic_identity": SALES_ROLE}
+
+    id: Mapped[int] = _specialization_id()
+    clients: Mapped[list[Client]] = relationship(back_populates="sales_contact")
+
+
+class SupportEmployee(Employee):
+    """Membre du support : il organise des événements."""
+
+    __tablename__ = "support_employees"
+    __table_args__ = MYSQL_TABLE_OPTIONS
+    __mapper_args__ = {"polymorphic_identity": SUPPORT_ROLE}
+
+    id: Mapped[int] = _specialization_id()
+    events: Mapped[list[Event]] = relationship(back_populates="support_contact")
+
+
+EMPLOYEE_CLASSES: dict[str, type[Employee]] = {
+    MANAGEMENT_ROLE: Manager,
+    SALES_ROLE: SalesEmployee,
+    SUPPORT_ROLE: SupportEmployee,
+}
 
 
 class Client(Base):
@@ -113,7 +144,7 @@ class Client(Base):
     company_name: Mapped[str] = mapped_column(String(200), nullable=False)
     sales_contact_id: Mapped[int] = mapped_column(
         BIGINT(unsigned=True),
-        ForeignKey("employees.id", ondelete="RESTRICT", onupdate="RESTRICT"),
+        ForeignKey("sales_employees.id", ondelete="RESTRICT", onupdate="RESTRICT"),
         nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -127,8 +158,8 @@ class Client(Base):
     )
     last_contact_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    sales_contact: Mapped[Employee] = relationship(
-        back_populates="sales_clients",
+    sales_contact: Mapped[SalesEmployee] = relationship(
+        back_populates="clients",
         foreign_keys=[sales_contact_id],
     )
     contracts: Mapped[list[Contract]] = relationship(back_populates="client")
@@ -214,7 +245,7 @@ class Event(Base):
     )
     support_contact_id: Mapped[int | None] = mapped_column(
         BIGINT(unsigned=True),
-        ForeignKey("employees.id", ondelete="SET NULL", onupdate="RESTRICT"),
+        ForeignKey("support_employees.id", ondelete="SET NULL", onupdate="RESTRICT"),
         nullable=True,
     )
     contact_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
@@ -236,7 +267,7 @@ class Event(Base):
     )
 
     contract: Mapped[Contract] = relationship(back_populates="event")
-    support_contact: Mapped[Employee | None] = relationship(
-        back_populates="supported_events",
+    support_contact: Mapped[SupportEmployee | None] = relationship(
+        back_populates="events",
         foreign_keys=[support_contact_id],
     )
